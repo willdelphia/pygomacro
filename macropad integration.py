@@ -2,8 +2,8 @@ import time
 from adafruit_macropad import MacroPad
 
 macropad = MacroPad()
-previous_position = macropad.encoder
 text_lines = macropad.display_text(title="GO!")
+previous_position = macropad.encoder
 
 
 red = (20,0,0)
@@ -12,10 +12,21 @@ blue = (0,0,20)
 cols = 3
 rows = 4
 
+review_offset = 0
+
 def create_board(X, Y):
     return [[0] * X for _ in range(Y)]
 
 board_history = [create_board(cols, rows)]
+capture_history = [(0,0)]
+
+
+def reset_game():
+    global board_history
+    global capture_history
+    board_history = [create_board(cols, rows)]
+    capture_history = [(0,0)]
+    update_display('New Game')
 
 def update_display(line2):
     i = len(board_history)
@@ -25,6 +36,14 @@ def update_display(line2):
         text_lines[1].text = "Blue's Turn" 
     
     text_lines[2].text = line2
+    capture1, capture2 = capture_history[-1]
+    text_lines[3].text = "Red: " + str(capture1) + " | Blue: " + str(capture2)
+    text_lines.show()
+
+def update_display_review():
+    text_lines[1].text = "Review Mode"
+    text_lines[2].text = "Move " + str(len(board_history) + review_offset)
+    text_lines[3].text = ""
     text_lines.show()
 
 
@@ -177,8 +196,6 @@ def is_valid_move(x,y,color, board):
     if len(liberties) > 0:
         # print('Valid because it has a at least 1 liberty')
         return True
-    else:
-        update_display('No liberties')
     
     #if is joining chain that has some liberties
     the_chain_liberties = get_chain_and_liberites(x,y,color, board)['liberties']
@@ -189,7 +206,7 @@ def is_valid_move(x,y,color, board):
     if len(the_chain_liberties) > 1:
         return True
     else:
-      update_display('No Liberties (Chain)')
+      update_display('No Liberties')
 
       
     #if is capturing
@@ -202,8 +219,10 @@ def is_valid_move(x,y,color, board):
 
 
     
-def paint_stones():
-    for row_index, row in enumerate(board_history[-1]):
+def paint_stones(board=None):
+    if board == None:
+        board = board_history[-1]
+    for row_index, row in enumerate(board):
         for col_index, col in enumerate(row):
             number = coordinates_to_number(col_index, row_index)
             value = (0,0,0)
@@ -214,7 +233,9 @@ def paint_stones():
             macropad.pixels[number] = value
 
 
+
 def attempt_move(x, y, color):
+    global capture_history
     board = board_history[-1]
     if is_valid_move(x, y, color, board):
         newBoard =  deep_copy_array(board_history[-1])
@@ -224,19 +245,29 @@ def attempt_move(x, y, color):
             update_display('Capturing...')
         for stone in captured_stones:
             update_board(stone[0], stone[1], 0, newBoard)
+        newCapture1 = capture_history[-1][0]
+        newCapture2 = capture_history[-1][1]
+        if color == 1:
+            newCapture1 = newCapture1 + len(captured_stones)
+        elif color == 2:
+            newCapture2 = newCapture2 + len(captured_stones)
 
 
         #check for Ko move 
         if len(board_history) > 2:
             same = are_boards_the_same(board_history[-2], newBoard)
             if(same == False):
+                #new turn
                 board_history.append(newBoard) 
+                capture_history.append((newCapture1, newCapture2))
                 update_display('...') 
                 #change turn
             else:
                 update_display('Invalid Move: Ko')
         else:
+            #new turn
             board_history.append(newBoard)
+            capture_history.append((newCapture1, newCapture2))
             update_display('...')
 
 
@@ -245,16 +276,38 @@ def attempt_move(x, y, color):
         paint_stones()
         # print(ascii_go_board(board_history[-1]))
 
+def clamp(value, min_value, max_value):
+    return max(min(value, max_value), min_value)
+
 
 # Main loop
+        
+update_display('New Game')
 
 while True:
     current_position = macropad.encoder
     if current_position != previous_position:
-      board_history = [create_board(cols, rows)]
-      update_display('New Game')
-      paint_stones()
-      previous_position = current_position
+        diff = current_position - previous_position
+        new_review_offset_value = review_offset + diff
+        review_offset = clamp(new_review_offset_value, -1 * (len(board_history) - 1), 0)
+
+        paint_stones(board_history[len(board_history) - 1 + review_offset])
+        if review_offset < 0:
+            update_display_review()
+        else: 
+            update_display("...")
+        previous_position = current_position
+
+    if macropad.encoder_switch:
+        if(review_offset == 0):
+            reset_game()
+            paint_stones()
+        else:
+            del board_history[review_offset:]
+            del capture_history[review_offset:]
+            review_offset = 0
+            paint_stones()
+            update_display("Resume Game")
 
 
     key_event = macropad.keys.events.get()
@@ -262,15 +315,16 @@ while True:
         key_number = key_event.key_number
         pressed = key_event.pressed
         if pressed:  
-            i = len(board_history)
-            if i % 2:
-                #"Red's Turn"
-                color = 1
-            else:
-                #"Blue's Turn"
-                color = 2
-            intersection = keyToIntersction(key_number)
-            attempt_move(intersection[0], intersection[1], color)
+            if review_offset == 0:
+                i = len(board_history)
+                if i % 2:
+                    #"Red's Turn"
+                    color = 1
+                else:
+                    #"Blue's Turn"
+                    color = 2
+                intersection = keyToIntersction(key_number)
+                attempt_move(intersection[0], intersection[1], color)
 
         
     time.sleep(0.1)
