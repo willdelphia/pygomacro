@@ -2,7 +2,6 @@ import time
 from adafruit_macropad import MacroPad
 
 macropad = MacroPad()
-text_lines = macropad.display_text(title="GO!")
 previous_position = macropad.encoder
 
 
@@ -13,6 +12,8 @@ cols = 3
 rows = 4
 
 review_offset = 0
+menu_mode = False
+review_mode = False
 
 def create_board(X, Y):
     return [[0] * X for _ in range(Y)]
@@ -27,8 +28,11 @@ def reset_game():
     board_history = [create_board(cols, rows)]
     capture_history = [(0,0)]
     update_display('New Game')
+    paint_stones()
 
 def update_display(line2):
+    text_lines = macropad.display_text(title="GO!")
+
     i = len(board_history)
     if i % 2:
         text_lines[1].text = "Red's Turn" 
@@ -41,9 +45,10 @@ def update_display(line2):
     text_lines.show()
 
 def update_display_review():
-    text_lines[1].text = "Review Mode"
-    text_lines[2].text = "Move " + str(len(board_history) + review_offset)
-    text_lines[3].text = ""
+    text_lines = macropad.display_text(title="Review Mode")
+    text_lines[1].text = "Move " + str(len(board_history) + review_offset)
+    text_lines[2].text = "Click to continue"
+    text_lines[3].text = "from this position"
     text_lines.show()
 
 
@@ -73,20 +78,6 @@ def are_boards_the_same(board1, board2):
                 return False
     
     return True
-
-
-def ascii_go_board(board):
-    ascii_board = ''
-    for row in board:
-        for stone in row:
-            if stone == 0:
-                ascii_board += '[ ]'  # Empty box
-            elif stone == 1:
-                ascii_board += ' X '  # Black stone
-            elif stone == 2:
-                ascii_board += ' O '  # White stone
-        ascii_board += '\n'
-    return ascii_board
 
 
 def keyToIntersction(number):
@@ -276,9 +267,83 @@ def attempt_move(x, y, color):
         paint_stones()
         # print(ascii_go_board(board_history[-1]))
 
+
+
+def resume_game_from_review():
+    global review_offset
+    # update_display(str(review_offset))
+    global review_mode
+    global board_history
+    global capture_history
+    del board_history[review_offset:]
+    del capture_history[review_offset:]
+    review_offset = 0
+    paint_stones()
+    update_display("Resume Game")
+    review_mode = False
+
+
 def clamp(value, min_value, max_value):
     return max(min(value, max_value), min_value)
 
+def enter_menu():
+    global menu_mode
+    menu_mode = True
+    render_menu()
+
+def pass_turn():
+     newCapture1 = capture_history[-1][0]
+     newCapture2 = capture_history[-1][1]
+     newBoard =  deep_copy_array(board_history[-1])
+     board_history.append(newBoard)
+     capture_history.append((newCapture1, newCapture2))
+     update_display('Player passed...')
+     paint_stones()
+
+def enter_review_mode():
+    global review_offset
+    global review_mode
+    review_offset = 0
+    review_mode = True
+    update_display_review()
+
+
+menu_options = [
+    ('PASS', 'Pass'),
+    ('RESUME', 'Resume Game'),
+    ('REVIEW', 'Review Mode'),
+    ('NEW', 'New Game'),
+]
+
+def render_menu():
+    option_len = len(menu_options)
+    text_lines = macropad.display_text(title="Menu")
+
+
+    text_lines[1].text = "-> " + str(menu_options[current_position % option_len][1])
+    text_lines[2].text = "   " + str(menu_options[(current_position + 1) % option_len][1])
+    text_lines[3].text = "   " + str(menu_options[(current_position + 2) % option_len ][1])
+    text_lines.show()
+
+def execute_menu_action():
+    global menu_mode
+    global review_mode
+    global review_offset
+    global board_history
+    menu_mode = False
+    option_len = len(menu_options)
+    action = menu_options[current_position % option_len][0]
+    if action == 'PASS':
+        pass_turn()
+    elif action == 'RESUME':
+        update_display("...")
+    elif action == 'REVIEW':
+        if len(board_history) > 1:
+            enter_review_mode()
+        else:
+            update_display("Play some moves first")
+    elif action == 'NEW':
+        reset_game()
 
 # Main loop
         
@@ -287,35 +352,36 @@ update_display('New Game')
 while True:
     current_position = macropad.encoder
     if current_position != previous_position:
-        diff = current_position - previous_position
-        new_review_offset_value = review_offset + diff
-        review_offset = clamp(new_review_offset_value, -1 * (len(board_history) - 1), 0)
+        if menu_mode:
+            render_menu()
+        elif review_mode:
+            diff = current_position - previous_position
+            new_review_offset_value = review_offset + diff
+            review_offset = clamp(new_review_offset_value, -1 * (len(board_history) - 1), 0)
 
-        paint_stones(board_history[len(board_history) - 1 + review_offset])
-        if review_offset < 0:
+            paint_stones(board_history[len(board_history) - 1 + review_offset])
             update_display_review()
-        else: 
-            update_display("...")
+
         previous_position = current_position
 
     if macropad.encoder_switch:
-        if(review_offset == 0):
-            reset_game()
-            paint_stones()
+        if review_mode == True:
+            resume_game_from_review()
         else:
-            del board_history[review_offset:]
-            del capture_history[review_offset:]
-            review_offset = 0
-            paint_stones()
-            update_display("Resume Game")
+            if menu_mode == False:
+                enter_menu()
+            else: 
+                execute_menu_action()
 
+            
+        
 
     key_event = macropad.keys.events.get()
     if key_event:
         key_number = key_event.key_number
         pressed = key_event.pressed
         if pressed:  
-            if review_offset == 0:
+            if review_mode == False and menu_mode == False:
                 i = len(board_history)
                 if i % 2:
                     #"Red's Turn"
